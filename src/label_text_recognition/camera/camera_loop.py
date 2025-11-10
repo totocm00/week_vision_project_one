@@ -13,6 +13,15 @@ from label_text_recognition.ocr.ocr_engine import build_ocr_engines
 from label_text_recognition.ocr.ocr_runner import run_ocr_on_image
 from label_text_recognition.exporters.json_exporter import export_to_json
 
+def get_definition_score(frame):
+    """
+    입력 프레임의 선명도를 대략적으로 계산합니다.
+    값이 클수록 선명한 이미지입니다.
+    """
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    lap = cv2.Laplacian(gray, cv2.CV_64F)
+    return lap.var()
+
 
 def start_camera_ocr() -> None:
     """
@@ -73,6 +82,11 @@ def start_camera_ocr() -> None:
             ts = time.strftime("%Y%m%d_%H%M%S")
             print(f"\n📸 캡처 {ts} → OCR 중...")
 
+            # 1) 선명도 점수 계산
+            def_score = get_definition_score(frame)
+            print(f"🔎 Definition score: {def_score:.2f}")
+
+            # 2) OCR 실행
             results, vis_img = run_ocr_on_image(frame.copy(), main_engine, conf_threshold)
 
             # 저장 경로
@@ -83,8 +97,30 @@ def start_camera_ocr() -> None:
             export_to_json(results, json_path)
 
             print(f"✅ 저장됨:\n- 이미지: {img_path}\n- JSON:   {json_path}")
-            for r in results:
-                print(f"- {r['text']} ({r['avg_conf']:.2f})")
+
+            # 3) OCR 결과 로그
+            # results가 리스트 형태라고 가정
+            if results:
+                # 라인별 출력
+                for r in results:
+                    text = r.get("text", "")
+                    avg_conf = r.get("avg_conf", 0.0)
+                    print(f"- {text} ({avg_conf:.2f})")
+
+                # 전체 평균 신뢰도도 한 번 찍어주자
+                confs = [r.get("avg_conf", 0.0) for r in results]
+                overall_conf = sum(confs) / len(confs)
+                print(f"📈 전체 평균 OCR 신뢰도: {overall_conf:.2f}")
+
+                # 선명도와 신뢰도를 같이 판단
+                if def_score < 200:
+                    print("⚠️ 이미지가 다소 흐립니다. 조명/초점 확인하세요.")
+                elif overall_conf < conf_threshold:
+                    print("⚠️ 인식은 되었으나 신뢰도가 낮습니다. 각도/거리 조정 필요.")
+                else:
+                    print("✅ 선명도와 인식률 모두 양호합니다.")
+            else:
+                print("⚠️ OCR 결과가 비어 있습니다.")
 
     cap.release()
     cv2.destroyAllWindows()
