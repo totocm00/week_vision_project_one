@@ -131,4 +131,117 @@ def _save_bbox_json(results: List[Dict[str, Any]], cfg: dict) -> str:
     out_dir = bbox_cfg["path"]
     filename_pattern = bbox_cfg.get("filename_pattern", "bbox_{ts}.json")
     filename = filename_pattern.replace("{ts}", ts)
-    output_path = os.path.join(out_di
+    output_path = os.path.join(out_dir, filename)
+
+    # bbox 데이터만 추출
+    bbox_only = []
+    for idx, item in enumerate(results):
+        bbox_only.append({
+            "id": idx,
+            "text": item.get("text", ""),
+            "confidence": item.get("avg_conf", 0.0),
+            "bbox": item.get("box", []),   # [[x1,y1],...]
+        })
+
+    # 폴더 생성
+    os.makedirs(out_dir, exist_ok=True)
+
+    # JSON 저장
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(bbox_only, f, ensure_ascii=False, indent=4)
+
+    print(f"🟦 바운딩 박스 JSON 저장 완료: {output_path}")
+    return output_path
+
+
+# ----------------------------------------------------------
+# (메인 API) export_all_json
+# ----------------------------------------------------------
+def export_all_json(results: List[Dict[str, Any]]) -> Dict[str, str]:
+    """
+    텍스트 JSON, 바운딩 박스 JSON을 config 기반으로 처리하여 저장합니다.
+
+    Parameters
+    ----------
+    results : list
+        OCR 결과 리스트.
+        예: [{"text": "...", "avg_conf": 0.92, "box": [[x1,y1], ...]}, ...]
+
+    Returns
+    -------
+    dict
+        {
+          "text_json": "assets/json/capture_....json",
+          "bbox_json": "assets/json_bbox/bbox_....json"
+        }
+        (해당 항목이 비활성화된 경우 빈 문자열 반환)
+    """
+
+    cfg = load_ocr_config()
+
+    # 저장 OFF면 전체 JSON 동작을 막음
+    if not cfg.get("enable_save_output", True):
+        print("💾 enable_save_output=false → 모든 JSON 저장 비활성화")
+        return {"text_json": "", "bbox_json": ""}
+
+    text_cfg = cfg["export_options"]["text_json"]
+    bbox_cfg = cfg["export_options"]["bbox_json"]
+
+    merge = bbox_cfg.get("merge_with_text_json", False)
+
+    # ------------------------------------------------------
+    # 1) 텍스트 JSON 먼저 저장
+    # ------------------------------------------------------
+    txt_json_path = ""
+    if text_cfg.get("enabled", True):
+        txt_json_path = _save_text_json(results, cfg)
+
+    # ------------------------------------------------------
+    # 2) bbox JSON (단독 또는 merge)
+    # ------------------------------------------------------
+    bbox_json_path = ""
+
+    if bbox_cfg.get("enabled", True):
+
+        if merge and txt_json_path:
+            # --------------------------------------------------
+            # 🔗 merge_with_text_json = true
+            # → 텍스트 JSON 내부에 bbox 데이터만 append
+            # --------------------------------------------------
+            print("🔗 merge_with_text_json=true → 텍스트 JSON 안에 bbox 데이터 병합")
+
+            # bbox_only 구성
+            bbox_only = []
+            for idx, item in enumerate(results):
+                bbox_only.append({
+                    "id": idx,
+                    "text": item.get("text", ""),
+                    "confidence": item.get("avg_conf", 0.0),
+                    "bbox": item.get("box", []),
+                })
+
+            # 텍스트 JSON 읽기 → 병합 → 다시 저장
+            with open(txt_json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            data = {
+                "results": data,      # 기존 텍스트 결과
+                "bbox": bbox_only     # 추가 bbox 결과
+            }
+
+            with open(txt_json_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+
+            bbox_json_path = txt_json_path  # 하나의 파일로 통합
+            print(f"🔗 bbox 데이터가 텍스트 JSON에 병합되었습니다 → {txt_json_path}")
+
+        else:
+            # --------------------------------------------------
+            # 별도 저장
+            # --------------------------------------------------
+            bbox_json_path = _save_bbox_json(results, cfg)
+
+    return {
+        "text_json": txt_json_path,
+        "bbox_json": bbox_json_path
+    }
